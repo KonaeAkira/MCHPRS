@@ -7,8 +7,11 @@ mod dedup_links;
 mod export_graph;
 mod identify_nodes;
 mod input_search;
+mod merge_repeaters;
+mod normalization;
 mod prune_orphans;
 mod unreachable_output;
+mod utils;
 
 use mchprs_world::World;
 
@@ -33,7 +36,10 @@ pub const fn make_default_pass_manager<'w, W: World>() -> PassManager<'w, W> {
         &analysis::ss_range_analysis::SSRangeAnalysis,
         &unreachable_output::UnreachableOutput,
         &constant_coalesce::ConstantCoalesce,
+        &normalization::CircuitNormalization,
         &coalesce::Coalesce,
+        &analysis::pulse_length_analysis::PulseLengthAnalysis,
+        &merge_repeaters::MergeRepeaters,
         &prune_orphans::PruneOrphans,
         &export_graph::ExportGraph,
     ])

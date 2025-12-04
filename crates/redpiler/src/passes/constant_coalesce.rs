@@ -5,9 +5,9 @@ use crate::compile_graph::{CompileGraph, CompileNode, NodeIdx, NodeState, NodeTy
 use crate::passes::AnalysisInfos;
 use crate::{CompilerInput, CompilerOptions};
 use mchprs_world::World;
+use petgraph::Direction;
 use petgraph::unionfind::UnionFind;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences, NodeIndexable};
-use petgraph::Direction;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 pub struct ConstantCoalesce;
@@ -58,7 +58,6 @@ impl<W: World> Pass<W> for ConstantCoalesce {
                             state: NodeState::ss(ss),
                             is_input: false,
                             is_output: false,
-                            annotations: Default::default(),
                         });
                         constant_nodes.insert(constant_idx);
                         *entry.insert(constant_idx)

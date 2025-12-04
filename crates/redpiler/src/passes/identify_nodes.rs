@@ -8,7 +8,7 @@
 //! There are no requirements for this pass.
 
 use super::Pass;
-use crate::compile_graph::{Annotations, CompileGraph, CompileNode, NodeIdx, NodeState, NodeType};
+use crate::compile_graph::{CompileGraph, CompileNode, NodeIdx, NodeState, NodeType};
 use crate::passes::AnalysisInfos;
 use crate::{CompilerInput, CompilerOptions};
 use itertools::Itertools;
@@ -16,7 +16,7 @@ use mchprs_blocks::block_entities::BlockEntity;
 use mchprs_blocks::blocks::Block;
 use mchprs_blocks::{BlockDirection, BlockFace, BlockPos};
 use mchprs_redstone::{self, comparator, noteblock, wire};
-use mchprs_world::{for_each_block_optimized, World};
+use mchprs_world::{World, for_each_block_optimized};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value;
 use tracing::warn;
@@ -104,10 +104,8 @@ fn for_pos<W: World>(
         ty,
         block: Some((pos, id)),
         state,
-
         is_input,
         is_output,
-        annotations: Annotations::default(),
     });
     first_pass.insert(pos, node_idx);
 }

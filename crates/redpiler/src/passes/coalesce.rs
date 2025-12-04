@@ -1,5 +1,5 @@
 use super::Pass;
-use crate::compile_graph::{CompileGraph, LinkType, NodeIdx, NodeType};
+use crate::compile_graph::{CompileGraph, CompileNode, LinkType, NodeIdx, NodeState, NodeType};
 use crate::passes::AnalysisInfos;
 use crate::{CompilerInput, CompilerOptions};
 use itertools::Itertools;
@@ -19,9 +19,15 @@ impl<W: World> Pass<W> for Coalesce {
         _: &mut AnalysisInfos,
     ) {
         loop {
-            let num_coalesced = run_iteration(graph);
-            trace!("Iteration combined {} nodes", num_coalesced);
-            if num_coalesced == 0 {
+            let num_coalesced = run_coalescing_iteration(graph);
+            if num_coalesced > 0 {
+                trace!("Iteration coalesced {} nodes", num_coalesced);
+                continue;
+            }
+            let num_normalized = run_normalization_iteration(graph);
+            if num_normalized > 0 {
+                trace!("Iteration normalized {} nodes", num_normalized);
+            } else {
                 break;
             }
         }
@@ -32,7 +38,7 @@ impl<W: World> Pass<W> for Coalesce {
     }
 }
 
-fn run_iteration(graph: &mut CompileGraph) -> usize {
+fn run_coalescing_iteration(graph: &mut CompileGraph) -> usize {
     let mut num_coalesced = 0;
     for i in 0..graph.node_bound() {
         let idx = NodeIdx::new(i);
@@ -102,4 +108,111 @@ fn coalesce(graph: &mut CompileGraph, node: NodeIdx, into: NodeIdx) {
         graph.add_edge(into, dest, weight);
     }
     graph.remove_node(node);
+}
+
+fn run_normalization_iteration(graph: &mut CompileGraph) -> usize {
+    let mut num_normalized = 0;
+    let idxs = graph.node_indices().collect_vec();
+    for idx in idxs {
+        let self_is_torch = graph[idx].ty == NodeType::Torch;
+        let target_idxs = graph
+            .neighbors_directed(idx, Direction::Outgoing)
+            .collect_vec();
+        for target_idx in target_idxs {
+            if try_swap_torch_in_front_of_repeater(graph, target_idx) {
+                num_normalized += 1;
+            } else if self_is_torch && try_convert_repeater_to_torch(graph, target_idx) {
+                num_normalized += 1;
+            }
+        }
+    }
+    num_normalized
+}
+
+fn try_swap_torch_in_front_of_repeater(graph: &mut CompileGraph, idx: NodeIdx) -> bool {
+    if !is_non_diode_facing_1_tick_repeater(&graph[idx]) {
+        return false;
+    }
+    if has_side_inputs(graph, idx) {
+        return false; // Don't swap if this repeater could become locked.
+    }
+    let target_idxs = graph
+        .edges_directed(idx, Direction::Outgoing)
+        .map(|e| e.target())
+        .collect_vec();
+    for &target_idx in &target_idxs {
+        if graph[target_idx].ty != NodeType::Torch {
+            return false; // Don't swap if one of the target nodes is not a torch.
+        }
+        if !has_exactly_one_input(graph, target_idx, LinkType::Default) {
+            return false; // Don't swap if this node is not the only input of the target node.
+        }
+    }
+    for target_idx in target_idxs {
+        graph[target_idx].ty = NodeType::Repeater {
+            delay: 1,
+            facing_diode: false,
+        };
+    }
+    graph[idx].ty = NodeType::Torch;
+    graph[idx].state = NodeState::simple(!graph[idx].state.powered);
+    true
+}
+
+fn try_convert_repeater_to_torch(graph: &mut CompileGraph, idx: NodeIdx) -> bool {
+    if !is_non_diode_facing_1_tick_repeater(&graph[idx]) {
+        return false;
+    }
+    if has_side_inputs(graph, idx) {
+        return false;
+    }
+    if !has_exactly_one_input(graph, idx, LinkType::Default) {
+        return false;
+    }
+
+    let target_idxs = graph
+        .neighbors_directed(idx, Direction::Outgoing)
+        .collect_vec();
+    for &target_idx in &target_idxs {
+        if !is_non_diode_facing_1_tick_repeater(&graph[target_idx]) {
+            return false;
+        }
+        if has_side_inputs(graph, target_idx) {
+            return false;
+        }
+        if !has_exactly_one_input(graph, target_idx, LinkType::Default) {
+            return false;
+        }
+    }
+
+    for target_idx in target_idxs {
+        graph[target_idx].ty = NodeType::Torch;
+    }
+    graph[idx].ty = NodeType::Torch;
+    graph[idx].state = NodeState::simple(!graph[idx].state.powered);
+    true
+}
+
+fn has_side_inputs(graph: &CompileGraph, idx: NodeIdx) -> bool {
+    graph
+        .edges_directed(idx, Direction::Incoming)
+        .any(|e| e.weight().ty == LinkType::Side)
+}
+
+fn is_non_diode_facing_1_tick_repeater(node: &CompileNode) -> bool {
+    matches!(
+        node.ty,
+        NodeType::Repeater {
+            delay: 1,
+            facing_diode: false,
+        }
+    )
+}
+
+fn has_exactly_one_input(graph: &CompileGraph, idx: NodeIdx, link_type: LinkType) -> bool {
+    graph
+        .edges_directed(idx, Direction::Incoming)
+        .filter(|e| e.weight().ty == link_type)
+        .exactly_one()
+        .is_ok()
 }

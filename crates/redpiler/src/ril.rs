@@ -1,8 +1,8 @@
 use crate::compile_graph::{CompileGraph, CompileLink, CompileNode, LinkType, NodeIdx, NodeType};
 use mchprs_blocks::blocks::{ComparatorMode, Instrument};
+use petgraph::Direction;
 use petgraph::stable_graph::EdgeReference;
 use petgraph::visit::EdgeRef;
-use petgraph::Direction;
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::iter::Peekable;

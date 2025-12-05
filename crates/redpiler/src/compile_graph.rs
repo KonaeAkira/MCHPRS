@@ -29,7 +29,7 @@ pub enum NodeType {
     },
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct NodeState {
     pub powered: bool,
     pub repeater_locked: bool,

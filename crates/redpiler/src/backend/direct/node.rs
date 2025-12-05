@@ -1,6 +1,12 @@
-use mchprs_blocks::blocks::ComparatorMode;
-use std::num::NonZeroU8;
 use std::ops::{Index, IndexMut};
+
+use crate::{
+    backend::direct::{
+        node_inputs::DigitalInput,
+        node_type::{ComparatorProperties, NodeType, NoteblockProperties, RepeaterProperties},
+    },
+    compile_graph::LinkType,
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct NodeId(u32);
@@ -64,113 +70,61 @@ impl IndexMut<NodeId> for Nodes {
     }
 }
 
-#[derive(Clone, Copy)]
+#[bitfield_struct::bitfield(u32)]
 pub struct ForwardLink {
-    data: u32,
+    #[bits(1)]
+    pub ty: LinkType,
+    #[bits(4)]
+    pub distance: u8,
+    #[bits(27)]
+    raw_target: u32,
 }
 
 impl ForwardLink {
-    pub fn new(id: NodeId, side: bool, ss: u8) -> Self {
-        assert!(id.index() < (1 << 27));
-        // the clamp_weights compile pass should ensure ss < 15
-        assert!(ss < 15);
-        Self {
-            data: (id.index() as u32) << 5 | if side { 1 << 4 } else { 0 } | ss as u32,
-        }
+    pub fn with_target(self, id: NodeId) -> Self {
+        self.with_raw_target_checked(id.0)
+            .expect("NodeId does not fit in 27 bits.")
     }
 
-    pub fn node(self) -> NodeId {
-        unsafe {
-            // safety: ForwardLink is constructed using a NodeId
-            NodeId::from_index((self.data >> 5) as usize)
-        }
-    }
-
-    pub fn side(self) -> bool {
-        self.data & (1 << 4) != 0
-    }
-
-    pub fn ss(self) -> u8 {
-        (self.data & 0b1111) as u8
+    pub fn target(self) -> NodeId {
+        unsafe { NodeId::from_index(self.raw_target() as usize) }
     }
 }
 
-impl std::fmt::Debug for ForwardLink {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ForwardLink")
-            .field("node", &self.node())
-            .field("side", &self.side())
-            .field("ss", &self.ss())
-            .finish()
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum NodeType {
-    Repeater {
-        delay: u8,
-        facing_diode: bool,
-    },
-    Torch,
-    Comparator {
-        mode: ComparatorMode,
-        far_input: Option<NonMaxU8>,
-        facing_diode: bool,
-    },
-    Lamp,
-    Button,
-    Lever,
-    PressurePlate,
-    Trapdoor,
-    Wire,
-    Constant,
-    NoteBlock {
-        noteblock_id: u16,
-    },
-}
-
-#[repr(align(16))]
-#[derive(Debug, Clone, Default)]
-pub struct NodeInput {
-    pub ss_counts: [u8; 16],
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct NonMaxU8(NonZeroU8);
-
-impl NonMaxU8 {
-    pub fn new(value: u8) -> Option<Self> {
-        NonZeroU8::new(value + 1).map(Self)
-    }
-
-    pub fn get(self) -> u8 {
-        self.0.get() - 1
-    }
-}
-
-// The `Node` struct's size is currently 64 bytes which happens to be the same
-// size as an L1 cache line on most modern processors. By forcing a 64-byte
-// alignment, we make sure that the entire `Node` can fit on one cache line,
-// preventing scenarios where we have to fetch 2 cache lines to read a single `Node`.
-#[repr(align(64))]
-#[derive(Debug, Clone)]
+#[bitfield_struct::bitfield(u128)]
 pub struct Node {
+    pub type_specific_properties: u16,
+    #[bits(4)]
     pub ty: NodeType,
-    pub default_inputs: NodeInput,
-    pub side_inputs: NodeInput,
-
-    /// The index to the first forward link of this node.
-    pub fwd_link_begin: usize,
-    /// The index to after the last forward link of this node.
-    pub fwd_link_end: usize,
-
     pub is_io: bool,
-
     /// Powered or lit
     pub powered: bool,
-    /// Only for repeaters
-    pub locked: bool,
-    pub output_power: u8,
     pub changed: bool,
     pub pending_tick: bool,
+
+    pub output_power: u8,
+
+    #[bits(16)]
+    pub digital_input: DigitalInput,
+
+    /// The index to after the last forward link of this node.
+    pub fwd_link_count: u16,
+    /// The index to the first forward link of this node.
+    pub fwd_link_begin: u32,
+    /// The index to the analog input values of this node.
+    pub analog_input_idx: u32,
+}
+
+impl Node {
+    pub fn get_repeater_properties(&self) -> RepeaterProperties {
+        RepeaterProperties::from_bits(self.type_specific_properties())
+    }
+
+    pub fn get_comparator_properties(&self) -> ComparatorProperties {
+        ComparatorProperties::from_bits(self.type_specific_properties())
+    }
+
+    pub fn get_noteblock_properties(&self) -> NoteblockProperties {
+        NoteblockProperties::from_bits(self.type_specific_properties())
+    }
 }

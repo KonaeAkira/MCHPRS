@@ -95,6 +95,22 @@ pub enum LinkType {
     Side,
 }
 
+impl LinkType {
+    pub const fn from_bits(bits: u8) -> Self {
+        match bits {
+            0 => Self::Default,
+            _ => Self::Side,
+        }
+    }
+
+    pub const fn into_bits(self) -> u8 {
+        match self {
+            LinkType::Default => 0,
+            LinkType::Side => 1,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CompileLink {
     pub ty: LinkType,

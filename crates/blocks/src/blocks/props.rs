@@ -44,7 +44,7 @@ pub enum ComparatorMode {
 }
 
 impl ComparatorMode {
-    pub(super) fn from_id(id: u32) -> ComparatorMode {
+    pub(super) const fn from_id(id: u32) -> ComparatorMode {
         match id {
             0 => ComparatorMode::Compare,
             1 => ComparatorMode::Subtract,
@@ -52,7 +52,7 @@ impl ComparatorMode {
         }
     }
 
-    pub(super) fn get_id(self) -> u32 {
+    pub(super) const fn get_id(self) -> u32 {
         match self {
             ComparatorMode::Compare => 0,
             ComparatorMode::Subtract => 1,
@@ -64,6 +64,14 @@ impl ComparatorMode {
             ComparatorMode::Subtract => ComparatorMode::Compare,
             ComparatorMode::Compare => ComparatorMode::Subtract,
         }
+    }
+
+    pub const fn from_bits(bits: u8) -> Self {
+        Self::from_id(bits as u32)
+    }
+
+    pub const fn into_bits(self) -> u8 {
+        self.get_id() as u8
     }
 }
 

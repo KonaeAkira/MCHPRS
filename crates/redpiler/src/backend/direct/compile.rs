@@ -1,3 +1,7 @@
+use crate::backend::direct::node_inputs::{AnalogInput, DigitalInput};
+use crate::backend::direct::node_type::{
+    ComparatorProperties, NodeType, NoteblockProperties, RepeaterProperties,
+};
 use crate::compile_graph::{CompileGraph, LinkType, NodeIdx};
 use crate::{CompilerOptions, TaskMonitor};
 use itertools::Itertools;
@@ -10,7 +14,7 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tracing::trace;
 
-use super::node::{ForwardLink, Node, NodeId, NodeInput, NodeType, Nodes, NonMaxU8};
+use super::node::{ForwardLink, Node, NodeId, Nodes};
 use super::DirectBackend;
 
 #[derive(Debug, Default)]
@@ -28,6 +32,7 @@ fn compile_node(
     nodes_map: &FxHashMap<NodeIdx, usize>,
     noteblock_info: &mut Vec<(BlockPos, Instrument, u32)>,
     forward_links: &mut Vec<ForwardLink>,
+    analog_inputs: &mut Vec<AnalogInput>,
     stats: &mut FinalGraphStats,
 ) -> Node {
     let node = &graph[node_idx];
@@ -37,8 +42,9 @@ fn compile_node(
     let mut default_input_count = 0;
     let mut side_input_count = 0;
 
-    let mut default_inputs = NodeInput { ss_counts: [0; 16] };
-    let mut side_inputs = NodeInput { ss_counts: [0; 16] };
+    let mut digital_input = DigitalInput::default();
+    let mut analog_input = AnalogInput::default();
+
     for edge in graph.edges_directed(node_idx, Direction::Incoming) {
         let weight = edge.weight();
         let distance = weight.ss;
@@ -53,24 +59,21 @@ fn compile_node(
                     );
                 }
                 default_input_count += 1;
-                default_inputs.ss_counts[ss as usize] += 1;
             }
             LinkType::Side => {
                 if side_input_count >= MAX_INPUTS {
                     panic!("Exceeded the maximum number of side inputs {}", MAX_INPUTS);
                 }
                 side_input_count += 1;
-                side_inputs.ss_counts[ss as usize] += 1;
             }
+        }
+        if ss != 0 {
+            digital_input.set(weight.ty, true);
+            analog_input.set(weight.ty, 0, ss);
         }
     }
     stats.default_link_count += default_input_count;
     stats.side_link_count += side_input_count;
-
-    // Make sure signal strength buckets add up to 255 so we can easily check for all zeros in
-    // get_bool_input
-    default_inputs.ss_counts[0] += (MAX_INPUTS - default_input_count) as u8;
-    side_inputs.ss_counts[0] += (MAX_INPUTS - side_input_count) as u8;
 
     use crate::compile_graph::NodeType as CNodeType;
     let fwd_link_begin = forward_links.len();
@@ -87,60 +90,79 @@ fn compile_node(
                 assert!(idx < nodes_len);
                 // Safety: bounds checked
                 let target_id = NodeId::from_index(idx);
-
                 let weight = edge.weight();
-                ForwardLink::new(target_id, weight.ty == LinkType::Side, weight.ss)
+                ForwardLink::new()
+                    .with_target(target_id)
+                    .with_ty(weight.ty)
+                    .with_distance(weight.ss)
             });
         forward_links.extend(new_links);
     };
     let fwd_link_end = forward_links.len();
     stats.update_link_count += fwd_link_end - fwd_link_begin;
 
-    let ty = match &node.ty {
+    let (node_type, properties) = match &node.ty {
         CNodeType::Repeater {
             delay,
             facing_diode,
-        } => NodeType::Repeater {
-            delay: *delay,
-            facing_diode: *facing_diode,
-        },
-        CNodeType::Torch => NodeType::Torch,
+        } => (
+            NodeType::Repeater,
+            RepeaterProperties::new()
+                .with_delay(*delay)
+                .with_facing_diode(*facing_diode)
+                .with_locked(node.state.repeater_locked)
+                .into_bits(),
+        ),
+        CNodeType::Torch => (NodeType::Torch, 0),
         CNodeType::Comparator {
             mode,
             far_input,
             facing_diode,
-        } => NodeType::Comparator {
-            mode: *mode,
-            far_input: far_input.map(|value| NonMaxU8::new(value).unwrap()),
-            facing_diode: *facing_diode,
-        },
-        CNodeType::Lamp => NodeType::Lamp,
-        CNodeType::Button => NodeType::Button,
-        CNodeType::Lever => NodeType::Lever,
-        CNodeType::PressurePlate => NodeType::PressurePlate,
-        CNodeType::Trapdoor => NodeType::Trapdoor,
-        CNodeType::Wire => NodeType::Wire,
-        CNodeType::Constant => NodeType::Constant,
+        } => (
+            NodeType::Comparator,
+            ComparatorProperties::new()
+                .with_mode(*mode)
+                .with_has_far_input(far_input.is_some())
+                .with_far_input(far_input.unwrap_or(0))
+                .with_facing_diode(*facing_diode)
+                .into_bits(),
+        ),
+        CNodeType::Lamp => (NodeType::Lamp, 0),
+        CNodeType::Button => (NodeType::Button, 0),
+        CNodeType::Lever => (NodeType::Lever, 0),
+        CNodeType::PressurePlate => (NodeType::PressurePlate, 0),
+        CNodeType::Trapdoor => (NodeType::Trapdoor, 0),
+        CNodeType::Wire => (NodeType::Wire, 0),
+        CNodeType::Constant => (NodeType::Constant, 0),
         CNodeType::NoteBlock { instrument, note } => {
             let noteblock_id = noteblock_info.len().try_into().unwrap();
             noteblock_info.push((node.block.unwrap().0, *instrument, *note));
-            NodeType::NoteBlock { noteblock_id }
+            (
+                NodeType::NoteBlock,
+                NoteblockProperties::new()
+                    .with_noteblock_id(noteblock_id)
+                    .into_bits(),
+            )
         }
     };
 
-    Node {
-        ty,
-        default_inputs,
-        side_inputs,
-        fwd_link_begin,
-        fwd_link_end,
-        powered: node.state.powered,
-        output_power: node.state.output_strength,
-        locked: node.state.repeater_locked,
-        pending_tick: false,
-        changed: false,
-        is_io: node.is_input || node.is_output,
-    }
+    let analog_input_idx = if node_type.is_analog() {
+        analog_inputs.push(analog_input);
+        analog_inputs.len() - 1
+    } else {
+        0
+    };
+
+    Node::new()
+        .with_ty(node_type)
+        .with_type_specific_properties(properties)
+        .with_powered(node.state.powered)
+        .with_is_io(node.is_input || node.is_output)
+        .with_output_power(node.state.output_strength)
+        .with_digital_input(digital_input)
+        .with_fwd_link_begin(fwd_link_begin as u32)
+        .with_fwd_link_count((fwd_link_end - fwd_link_begin) as u16)
+        .with_analog_input_idx(analog_input_idx as u32)
 }
 
 pub fn compile(
@@ -169,6 +191,7 @@ pub fn compile(
                 &nodes_map,
                 &mut backend.noteblock_info,
                 &mut backend.forward_links,
+                &mut backend.analog_inputs,
                 &mut stats,
             )
         })
@@ -195,7 +218,7 @@ pub fn compile(
             backend
                 .scheduler
                 .schedule_tick(*node, entry.ticks_left as usize, entry.tick_priority);
-            backend.nodes[*node].pending_tick = true;
+            backend.nodes[*node].set_pending_tick(true);
         }
     }
 

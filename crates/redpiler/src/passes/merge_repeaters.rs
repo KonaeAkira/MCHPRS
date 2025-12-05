@@ -28,7 +28,7 @@ impl<W: World> Pass<W> for MergeRepeaters {
         for idx in idxs {
             if graph.contains_node(idx) {
                 try_merge_repeater_chain(graph, idx, analysis);
-                try_merge_repeaters(graph, idx);
+                try_merge_repeaters(graph, idx, analysis);
             }
         }
     }
@@ -76,16 +76,23 @@ fn try_merge_repeater_chain(graph: &mut CompileGraph, idx: NodeIdx, analysis: &P
     };
 }
 
-fn try_merge_repeaters(graph: &mut CompileGraph, idx: NodeIdx) -> Option<()> {
+fn try_merge_repeaters(
+    graph: &mut CompileGraph,
+    idx: NodeIdx,
+    analysis: &PulseLengthInfo,
+) -> Option<()> {
     if graph[idx].ty != NodeType::Torch {
         return None;
     }
 
     let source_idx = graph.neighbors_directed(idx, Incoming).exactly_one().ok()?;
-    let NodeType::Repeater { delay: 1..4, .. } = graph[source_idx].ty else {
+    let NodeType::Repeater { delay: 1, .. } = graph[source_idx].ty else {
         return None;
     };
     if has_side_inputs(graph, source_idx) || !has_exactly_one_output(graph, source_idx) {
+        return None;
+    }
+    if analysis.min_pulse_duration(source_idx) < 2 {
         return None;
     }
 

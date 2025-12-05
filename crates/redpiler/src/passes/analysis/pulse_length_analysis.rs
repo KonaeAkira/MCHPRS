@@ -159,9 +159,6 @@ fn analyze_torch(
         min_incoming_on = min_incoming_on.min(analysis.min_on_pulse_duration(incoming_idx));
         min_incoming_off = min_incoming_off.min(analysis.min_off_pulse_duration(incoming_idx));
     }
-    let all_incoming_are_repeaters = graph
-        .neighbors_directed(idx, Direction::Incoming)
-        .all(|incoming_idx| matches!(graph[incoming_idx].ty, NodeType::Repeater { .. }));
     if graph.neighbors_directed(idx, Direction::Incoming).count() > 1 {
         // Even if all inputs have a long OFF pulse, the timing between the inputs could still lead
         // to a situation that generates a very quick OFF input pulse for this node.
@@ -169,6 +166,9 @@ fn analyze_torch(
     }
     let mut min_outgoing_on = min_incoming_off;
     let mut min_outgoing_off = min_incoming_on;
+    let all_incoming_are_repeaters = graph
+        .neighbors_directed(idx, Direction::Incoming)
+        .all(|incoming_idx| matches!(graph[incoming_idx].ty, NodeType::Repeater { .. }));
     if all_incoming_are_repeaters {
         // Torches cannot be triggered by 0-rt or 1-rt pulses from repeaters.
         // So if all inputs are from repeaters, the ON/OFF pulses from this torch must be at least 2-rt.

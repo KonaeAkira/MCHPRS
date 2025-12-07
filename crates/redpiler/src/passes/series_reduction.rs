@@ -102,7 +102,7 @@ fn reduce_chain(
         return; // Chain consists of only 4-tick elements so it cannot be reduced further.
     }
 
-    let new_chain = find_shorted_chain_with_profile(&pulse_profile)
+    let new_chain = find_shortest_chain_with_profile(&pulse_profile)
         .expect("The original chain is valid so there's always at least one solution.");
     if new_chain.len() >= chain.len() {
         return;
@@ -145,7 +145,7 @@ fn reduce_chain(
 }
 
 /// Find the shortest sequence of Torches and Repeaters that exactly match the given pulse profile.
-fn find_shorted_chain_with_profile(target_profile: &PulseProfile) -> Option<Vec<Type>> {
+fn find_shortest_chain_with_profile(target_profile: &PulseProfile) -> Option<Vec<Type>> {
     let mut seen_profiles = FxHashSet::default();
     let mut queue = VecDeque::new();
 
@@ -317,6 +317,7 @@ impl PulseProfile {
                 return false; // Repeaters don't react to OFF pulses shorter than their delay.
             }
             to.duration = to.duration.max(repeater_delay);
+            to.priority = Priority::High;
             true
         });
     }

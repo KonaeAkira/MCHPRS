@@ -11,6 +11,7 @@ use mchprs_world::World;
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;
 use rustc_hash::FxHashSet;
+use tracing::trace;
 
 pub struct SeriesReduction;
 
@@ -27,6 +28,7 @@ impl<W: World> Pass<W> for SeriesReduction {
             chains.extend(discover_chain(graph, idx));
         }
 
+        let mut num_nodes_removed = 0;
         for (head_idx, mut chain_elements, tail_idx) in chains {
             if chain_elements
                 .iter()
@@ -34,8 +36,10 @@ impl<W: World> Pass<W> for SeriesReduction {
             {
                 continue; // Some nodes were already removed.
             }
-            reduce_chain(graph, chain_elements.make_contiguous(), head_idx, tail_idx);
+            num_nodes_removed +=
+                reduce_chain(graph, chain_elements.make_contiguous(), head_idx, tail_idx);
         }
+        trace!("Removed {num_nodes_removed} nodes.");
     }
 
     fn status_message(&self) -> &'static str {
@@ -80,12 +84,14 @@ fn discover_chain(
     Some((head_idx, chain, tail_idx))
 }
 
+/// Attempts to reduce the number of nodes by replacing the given chain with a shorter chain with the same functionality.
+/// Returns the difference between the new and the old chains in number of nodes.
 fn reduce_chain(
     graph: &mut CompileGraph,
     chain: &[Element],
     mut head_idx: NodeIdx,
     tail_idx: NodeIdx,
-) {
+) -> usize {
     let mut pulse_profile = PulseProfile::new();
     for element in chain {
         match element.ty {
@@ -96,16 +102,17 @@ fn reduce_chain(
 
     // Catch some common unoptimizable cases early so we don't waste time trying to optimize them.
     if pulse_profile.total_delay == chain.len() as u32 {
-        return; // Chain consists of only 1-tick elements so it cannot be reduced further.
+        return 0; // Chain consists of only 1-tick elements so it cannot be reduced further.
     }
     if pulse_profile.total_delay == chain.len() as u32 * 4 {
-        return; // Chain consists of only 4-tick elements so it cannot be reduced further.
+        return 0; // Chain consists of only 4-tick elements so it cannot be reduced further.
     }
 
     let new_chain = find_shortest_chain_with_profile(&pulse_profile)
         .expect("The original chain is valid so there's always at least one solution.");
-    if new_chain.len() >= chain.len() {
-        return;
+    let nodes_saved = chain.len().saturating_sub(new_chain.len());
+    if nodes_saved == 0 {
+        return 0;
     }
 
     // Remove the old chain.
@@ -142,6 +149,8 @@ fn reduce_chain(
         head_idx = new_idx;
     }
     graph.add_edge(head_idx, tail_idx, CompileLink::default(0));
+
+    nodes_saved
 }
 
 /// Find the shortest sequence of Torches and Repeaters that exactly match the given pulse profile.

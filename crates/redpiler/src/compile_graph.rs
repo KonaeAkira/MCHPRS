@@ -4,7 +4,7 @@ use petgraph::stable_graph::{NodeIndex, StableGraph};
 
 pub type NodeIdx = NodeIndex;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeType {
     Repeater {
         delay: u8,
